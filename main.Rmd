@@ -1,0 +1,89 @@
+---
+title: "xGF Logistic Regression"
+output:
+  html_document:
+    df_print: paged
+---
+
+Let's start but importing our library for data manipulation from the 'NHL' api.
+
+```{r}
+library(nhlscrape)
+```
+
+Next we can set the path to the database file, and pull down some records that we can start our cleanup and analysis on.
+
+```{r echo=T, message=FALSE}
+SetDbPath("C:/Users/Adam/Documents/nhlexpectedgoals/nhl.sqlite")
+
+dates <- c("2019-10-02", "2020-02-02")
+team_list <- QueryDb("SELECT abbreviation FROM teams")$abbreviation
+team_ids <- list()
+game_ids <- list()
+
+# Add all teams and game_ids to a list
+for (i in 1:length(team_list)) {
+  temp_team_id <- GetTeamId(team_list[i])
+  team_ids <- c(team_ids, temp_team_id)
+  game_ids <- c(game_ids, list(GetGameIdRange(temp_team_id, dates[1], dates[2])))
+  #AddGameEvents(game_ids[[i]])
+}
+```
+
+Now that we have the records in the database, let's start building out dataframe containing all the variables we are testing against. The plan is the train against the following variables:
+
+* Shot type (String)
+* Shot distance (Double)
+* Shot angle (Double)
+* Rebound (Boolean)
+* Rush (Boolean)
+* TODO Player advantage (Boolean)
+* TODO Goalie streak, percent previous shots saved (Dousble)
+* Total previous saves (Integer)
+
+So we need to process each games worth of data on its own to generate all of these variables. Table schema can be found in the nhlscrape documentation (TODO) so using that info we can write a couple of for loops and process the data. The function is located in "dataProcess.R".
+
+```{r}
+source("C:/Users/Adam/Documents/nhlexpectedgoals/dataProcess.R")
+data <- processed_data(team_ids, game_ids)
+data$Goal <- factor(data$Goal)
+data$ShotType <- factor(data$ShotType)
+head(data)
+```
+
+We now have just under 1000 data points to work with. Next let's divide the data into a training and testing set. Make sure we set the goals as the column we want to predict so we get approximately the same percentage of goals in each set.
+
+```{r message=FALSE, warning=FALSE}
+library(caret)
+set.seed(3456)
+trainIndex <- createDataPartition(data$Goal, p = .7,
+                                  list = FALSE,
+                                  times = 1)
+train <- data[trainIndex,]
+test <- data[-trainIndex,]
+```
+
+Next let's train up a glm model and see how we do with prediction on the testing set.
+
+```{r}
+logit <- glm(Goal ~ ShotType + ShotDistance + ShotAngle + Rebound + Rush + PreviousShots, data = train, family=binomial(link="logit"))
+summary(logit)
+```
+
+Let's look at the coefs:
+
+```{r}
+exp(coef(logit))
+test$prob <- predict(logit, test, type="response")
+test$prob[is.na(test$prob)] <- 0
+head(test, n=50)
+```
+
+
+Now let's plot the thing. We want to use ggplot so we can set tome transparency on the shots (since we have a lot of them!).
+
+```{r}
+ggplot(data=test, mapping=aes(x=prob, y=Goal)) + geom_point(color="#69b3a2", size=2, alpha=0.01)
+```
+
+
